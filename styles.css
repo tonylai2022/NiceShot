@@ -1,0 +1,6 @@
+/* Custom styles or overrides if needed beyond Tailwind */
+body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: ui-sans-serif, system-ui, sans-serif;
+}
