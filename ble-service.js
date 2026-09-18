@@ -43,24 +43,40 @@ export class TennisBLEService {
             this.characteristic.addEventListener('characteristicvaluechanged', (e) => this._handleNotification(e));
 
             console.log("[BLE] Success! Fully connected and subscribed.");
-            this.onConnectionChange(true, this.device.name || "TennisSync");
+            this.onConnectionChange(true, this.device.name || "XIAO-Tennis");
         } catch (error) {
             console.error("[BLE Connection Error Detail]:", error);
-            alert(`BLE Error: ${error.message || error}`); // Pops up on mobile so you see the exact error without a console
+            alert(`BLE Error: ${error.message || error}`);
             throw error;
         }
     }
 
     _handleNotification(event) {
         const value = event.target.value;
-        if (value.byteLength >= 6) {
-            const gRaw = value.getUint16(0, true);
-            const timeMs = value.getUint32(2, true);
-            const peakG = gRaw / 100.0;
+
+        // 確保至少有 10 bytes
+        if (value.byteLength >= 10) {
+            // 使用 true 代表 Little-endian（nRF52 系列預設為 Little-endian）
+            const peakG = value.getFloat32(0, true);
+            const maxGyro = value.getFloat32(4, true);
+            const duration = value.getUint16(8, true);
 
             if (this.onImpactCallback) {
-                this.onImpactCallback({ timeMs, peakG });
+                this.onImpactCallback({
+                    peakG: isNaN(peakG) ? 0 : peakG,
+                    maxGyro: isNaN(maxGyro) ? 0 : maxGyro,
+                    duration: isNaN(duration) ? 0 : duration
+                });
             }
+        } else {
+            console.warn(`[BLE] Unexpected packet length: ${value.byteLength} bytes`);
+        }
+    }
+
+    async disconnect() {
+        if (this.device && this.device.gatt.connected) {
+            await this.device.gatt.disconnect();
+            console.log('Disconnected successfully.');
         }
     }
 }

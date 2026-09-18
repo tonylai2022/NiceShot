@@ -14,11 +14,11 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 </head>
 
-<body class="min-h-screen flex flex-col items-center p-6">
+<body class="min-h-screen flex flex-col items-center p-6 bg-slate-950 text-slate-100">
 
     <header class="text-center mb-6">
         <h1 class="text-3xl font-extrabold tracking-tight text-emerald-400">Tennis AI Vision + IMU HUD</h1>
-        <p class="text-slate-400 text-sm mt-1">Advanced Biomechanical Tracker</p>
+        <p class="text-slate-400 text-sm mt-1">Advanced Biomechanical Tracker (XIAO nRF52840)</p>
     </header>
 
     <!-- Control, Status & Settings Panel -->
@@ -56,19 +56,28 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full max-w-6xl">
         <div
             class="lg:col-span-2 relative bg-black rounded-2xl overflow-hidden border border-slate-800 shadow-2xl flex items-center justify-center min-h-[400px]">
-            <!-- Video and Canvas element class handles dynamic mirroring via app.js if needed -->
+            <!-- Video and Canvas element -->
             <video id="webcam" class="absolute inset-0 w-full h-full object-cover hidden" autoplay playsinline
                 muted></video>
             <canvas id="outputCanvas" class="absolute inset-0 w-full h-full"></canvas>
 
+            <!-- 擴充為顯示完整多指標的 HUD Overlay -->
             <div id="hudOverlay"
-                class="absolute top-4 left-4 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 p-4 rounded-xl shadow-xl w-72 pointer-events-none">
-                <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Live Telemetry</div>
+                class="absolute top-4 left-4 bg-slate-900/85 backdrop-blur-md border border-slate-700/60 p-4 rounded-xl shadow-xl w-80 pointer-events-none">
+                <div class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Live Telemetry HUD</div>
                 <div id="strokeText" class="text-lg font-bold text-emerald-400 mt-1">Tracking Active</div>
                 <div class="mt-3 grid grid-cols-2 gap-2 text-sm border-t border-slate-700 pt-2">
                     <div>
                         <span class="text-slate-400 text-xs block">Peak G</span>
                         <span id="peakGText" class="font-mono text-base font-bold text-white">0.00 G</span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 text-xs block">Max Gyro</span>
+                        <span id="maxGyroText" class="font-mono text-base font-bold text-emerald-300">0.00 °/s</span>
+                    </div>
+                    <div>
+                        <span class="text-slate-400 text-xs block">Duration</span>
+                        <span id="durationText" class="font-mono text-base font-bold text-cyan-300">0 ms</span>
                     </div>
                     <div>
                         <span class="text-slate-400 text-xs block">Total Hits</span>
