@@ -60,12 +60,14 @@ export class TennisBLEService {
             const peakG = value.getFloat32(0, true);
             const maxGyro = value.getFloat32(4, true);
             const duration = value.getUint16(8, true);
+            const racketAngle = value.byteLength >= 14 ? value.getFloat32(10, true) : null;
 
             if (this.onImpactCallback) {
                 this.onImpactCallback({
                     peakG: isNaN(peakG) ? 0 : peakG,
                     maxGyro: isNaN(maxGyro) ? 0 : maxGyro,
-                    duration: isNaN(duration) ? 0 : duration
+                    duration: isNaN(duration) ? 0 : duration,
+                    racketAngle: racketAngle !== null && !isNaN(racketAngle) ? racketAngle : null
                 });
             }
         } else {

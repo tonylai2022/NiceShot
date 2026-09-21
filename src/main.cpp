@@ -9,6 +9,37 @@ BLEService        tennisService("19B10000-E8F2-537E-4F6C-D104768A1214");
 BLECharacteristic impactCharacteristic("19B10011-E8F2-537E-4F6C-D104768A1214");
 
 const float IMPACT_THRESHOLD = 3.5; 
+float trackedRacketAngle = 0.0f;
+uint32_t lastOrientationMicros = 0;
+bool orientationInitialized = false;
+
+float updateRacketAngle(float ax, float ay, float az, float gyroX) {
+  uint32_t now = micros();
+  float accelAngle = atan2(ay, az) * 180.0f / PI;
+
+  if (!orientationInitialized) {
+    trackedRacketAngle = accelAngle;
+    lastOrientationMicros = now;
+    orientationInitialized = true;
+    return trackedRacketAngle;
+  }
+
+  float deltaSeconds = (now - lastOrientationMicros) / 1000000.0f;
+  lastOrientationMicros = now;
+  trackedRacketAngle += gyroX * deltaSeconds;
+
+  float totalG = sqrt(ax * ax + ay * ay + az * az);
+  if (totalG > 0.8f && totalG < 1.2f) {
+    float correction = accelAngle - trackedRacketAngle;
+    while (correction > 180.0f) correction -= 360.0f;
+    while (correction < -180.0f) correction += 360.0f;
+    trackedRacketAngle += 0.02f * correction;
+  }
+
+  while (trackedRacketAngle > 180.0f) trackedRacketAngle -= 360.0f;
+  while (trackedRacketAngle < -180.0f) trackedRacketAngle += 360.0f;
+  return trackedRacketAngle;
+}
 
 void startAdv(void) {
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
@@ -33,7 +64,7 @@ void setup() {
   
   impactCharacteristic.setProperties(CHR_PROPS_READ | CHR_PROPS_NOTIFY);
   impactCharacteristic.setPermission(SECMODE_OPEN, SECMODE_OPEN);
-  impactCharacteristic.setFixedLen(10); // 10 bytes: peakG(4) + maxGyro(4) + duration(2)
+  impactCharacteristic.setFixedLen(14); // peakG(4) + maxGyro(4) + duration(2) + racketAngle(4)
   impactCharacteristic.begin();
 
   startAdv();
@@ -43,13 +74,16 @@ void loop() {
   float ax = myIMU.readFloatAccelX();
   float ay = myIMU.readFloatAccelY();
   float az = myIMU.readFloatAccelZ();
+  float gx = myIMU.readFloatGyroX();
   float gz = myIMU.readFloatGyroZ();
 
   float totalG = sqrt(ax * ax + ay * ay + az * az);
+  float currentRacketAngle = updateRacketAngle(ax, ay, az, gx);
 
   if (totalG > IMPACT_THRESHOLD) {
     float peakG = totalG;
     float maxGyro = abs(gz);
+    float racketAngle = currentRacketAngle;
     unsigned long startTime = millis();
     unsigned long windowStart = millis(); 
     
@@ -58,10 +92,15 @@ void loop() {
       float sa = myIMU.readFloatAccelX();
       float sb = myIMU.readFloatAccelY();
       float sc = myIMU.readFloatAccelZ();
+      float sx = myIMU.readFloatGyroX();
       float sg = myIMU.readFloatGyroZ();
+      float sampleRacketAngle = updateRacketAngle(sa, sb, sc, sx);
       
       float curG = sqrt(sa * sa + sb * sb + sc * sc);
-      if (curG > peakG) peakG = curG;
+      if (curG > peakG) {
+        peakG = curG;
+        racketAngle = sampleRacketAngle;
+      }
       if (abs(sg) > maxGyro) maxGyro = abs(sg);
     }
     
@@ -73,16 +112,20 @@ void loop() {
     Serial.print(maxGyro);
     Serial.print(" °/s | Duration: ");
     Serial.print(duration);
-    Serial.println(" ms");
+    Serial.print(" ms | Racket Angle: ");
+    Serial.print(racketAngle);
+    Serial.println("°");
 
     // 只要藍牙保持連線就強制發送，避開 notifyEnabled() 狀態判定盲點
     if (Bluefruit.connected()) {
-      uint8_t payload[10];
+      uint8_t payload[14];
+      uint16_t durationMs = static_cast<uint16_t>(duration);
       
-      // 使用 memcpy 確保 10 bytes 封包精確填入
+      // 使用 memcpy 確保 14 bytes 封包精確填入
       memcpy(&payload[0], &peakG, 4);       // 0-3 bytes: peakG
       memcpy(&payload[4], &maxGyro, 4);     // 4-7 bytes: maxGyro
-      memcpy(&payload[8], &duration, 2);    // 8-9 bytes: duration
+      memcpy(&payload[8], &durationMs, 2);  // 8-9 bytes: duration
+      memcpy(&payload[10], &racketAngle, 4); // 10-13 bytes: racketAngle
       
       uint16_t result = impactCharacteristic.notify(payload, sizeof(payload));
       
