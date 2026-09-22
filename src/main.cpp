@@ -11,6 +11,8 @@ BLECharacteristic impactCharacteristic("19B10011-E8F2-537E-4F6C-D104768A1214");
 const float IMPACT_THRESHOLD = 3.5; 
 const float RACKET_HEAD_RADIUS_METERS = 0.68f;
 const uint32_t PRE_IMPACT_WINDOW_MS = 300;
+const uint32_t IMPACT_PEAK_WINDOW_MS = 30;
+const uint32_t POST_IMPACT_WINDOW_MS = 120;
 const uint16_t GYRO_HISTORY_SIZE = 128;
 
 struct GyroSample {
@@ -85,7 +87,9 @@ void startAdv(void) {
 void setup() {
   Serial.begin(115200);
   myIMU.settings.gyroRange = 2000;
-  myIMU.settings.gyroSampleRate = 416;
+  myIMU.settings.gyroSampleRate = 833;
+  myIMU.settings.accelRange = 16;
+  myIMU.settings.accelSampleRate = 833;
   myIMU.begin();
   
   Bluefruit.begin();
@@ -96,7 +100,7 @@ void setup() {
   
   impactCharacteristic.setProperties(CHR_PROPS_READ | CHR_PROPS_NOTIFY);
   impactCharacteristic.setPermission(SECMODE_OPEN, SECMODE_OPEN);
-  impactCharacteristic.setFixedLen(18); // Existing 14-byte payload + racketSpeedKmh(4)
+  impactCharacteristic.setFixedLen(20);
   impactCharacteristic.begin();
 
   startAdv();
@@ -120,10 +124,18 @@ void loop() {
     float maxGyro = getRecentMaxGyro(millis());
     float sensorAngle = currentRacketAngle;
     unsigned long startTime = millis();
-    unsigned long windowStart = millis(); 
+    unsigned long windowStart = millis();
+    float previousTotalG = totalG;
+    float previousGx = gx;
+    float previousGy = gy;
+    float previousGz = gz;
+    float torsionKick = 0.0f;
+    float vibrationDeltaSum = 0.0f;
+    uint16_t vibrationSamples = 0;
+    uint16_t decayMs = 0;
     
-    // 擷取 30ms 內的擊球最高峰值
-    while (millis() - windowStart < 30) {
+    while (millis() - windowStart < POST_IMPACT_WINDOW_MS) {
+      uint16_t elapsedMs = static_cast<uint16_t>(millis() - windowStart);
       float sa = myIMU.readFloatAccelX();
       float sb = myIMU.readFloatAccelY();
       float sc = myIMU.readFloatAccelZ();
@@ -133,40 +145,69 @@ void loop() {
       float sampleRacketAngle = updateRacketAngle(sa, sb, sc, sx);
       
       float curG = sqrt(sa * sa + sb * sb + sc * sc);
-      if (curG > peakG) {
+      if (elapsedMs < IMPACT_PEAK_WINDOW_MS && curG > peakG) {
         peakG = curG;
         sensorAngle = sampleRacketAngle;
       }
       float sampleGyroMagnitude = sqrt(sx * sx + sy * sy + sg * sg);
       if (sampleGyroMagnitude > maxGyro) maxGyro = sampleGyroMagnitude;
+
+      float gyroStep = sqrt(
+        (sx - previousGx) * (sx - previousGx) +
+        (sy - previousGy) * (sy - previousGy) +
+        (sg - previousGz) * (sg - previousGz)
+      );
+      if (gyroStep > torsionKick) torsionKick = gyroStep;
+
+      float accelStep = abs(curG - previousTotalG);
+      if (elapsedMs >= 8) {
+        vibrationDeltaSum += accelStep;
+        vibrationSamples++;
+        if (accelStep > 0.25f || gyroStep > 20.0f) decayMs = elapsedMs;
+      }
+
+      previousTotalG = curG;
+      previousGx = sx;
+      previousGy = sy;
+      previousGz = sg;
     }
     
-    unsigned long duration = millis() - startTime;
+    unsigned long captureDuration = millis() - startTime;
+    float vibrationLevel = vibrationSamples > 0 ? vibrationDeltaSum / vibrationSamples : 0.0f;
     float racketSpeedKmh = maxGyro * DEG_TO_RAD * RACKET_HEAD_RADIUS_METERS * 3.6f;
+    uint8_t torsionEncoded = static_cast<uint8_t>(constrain(round(torsionKick / 4.0f), 0.0f, 255.0f));
+    uint8_t vibrationEncoded = static_cast<uint8_t>(constrain(round(vibrationLevel / 0.02f), 0.0f, 255.0f));
 
     Serial.print("[SWING DETECTED] Peak G: ");
     Serial.print(peakG);
     Serial.print(" G | Max Gyro: ");
     Serial.print(maxGyro);
-    Serial.print(" °/s | Duration: ");
-    Serial.print(duration);
-    Serial.print(" ms | Sensor Angle: ");
+    Serial.print(" °/s | Sensor Angle: ");
     Serial.print(sensorAngle);
     Serial.print("° | Racket Speed: ");
     Serial.print(racketSpeedKmh);
-    Serial.println(" km/h");
+    Serial.print(" km/h | Torsion Kick: ");
+    Serial.print(torsionKick);
+    Serial.print(" °/s | Vibration: ");
+    Serial.print(vibrationLevel);
+    Serial.print(" G | Decay: ");
+    Serial.print(decayMs);
+    Serial.print(" ms | Capture: ");
+    Serial.print(captureDuration);
+    Serial.println(" ms");
 
     // 只要藍牙保持連線就強制發送，避開 notifyEnabled() 狀態判定盲點
     if (Bluefruit.connected()) {
-      uint8_t payload[18];
-      uint16_t durationMs = static_cast<uint16_t>(duration);
+      uint8_t payload[20];
       
       // 使用 memcpy 確保 14 bytes 封包精確填入
       memcpy(&payload[0], &peakG, 4);       // 0-3 bytes: peakG
       memcpy(&payload[4], &maxGyro, 4);     // 4-7 bytes: maxGyro
-      memcpy(&payload[8], &durationMs, 2);  // 8-9 bytes: duration
+      memcpy(&payload[8], &decayMs, 2);     // 8-9 bytes: vibration decay
       memcpy(&payload[10], &sensorAngle, 4); // 10-13 bytes: raw sensor angle
       memcpy(&payload[14], &racketSpeedKmh, 4); // 14-17 bytes: estimated racket speed
+      payload[18] = torsionEncoded;          // torsional kick in 4 deg/s steps
+      payload[19] = vibrationEncoded;        // mean vibration delta in 0.02 G steps
       
       uint16_t result = impactCharacteristic.notify(payload, sizeof(payload));
       

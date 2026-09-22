@@ -62,6 +62,8 @@ export class TennisBLEService {
             const duration = value.getUint16(8, true);
             const racketAngle = value.byteLength >= 14 ? value.getFloat32(10, true) : null;
             const racketSpeed = value.byteLength >= 18 ? value.getFloat32(14, true) : null;
+            const torsionKick = value.byteLength >= 20 ? value.getUint8(18) * 4 : null;
+            const vibrationLevel = value.byteLength >= 20 ? value.getUint8(19) * 0.02 : null;
 
             if (this.onImpactCallback) {
                 this.onImpactCallback({
@@ -69,7 +71,10 @@ export class TennisBLEService {
                     maxGyro: isNaN(maxGyro) ? 0 : maxGyro,
                     duration: isNaN(duration) ? 0 : duration,
                     racketAngle: racketAngle !== null && !isNaN(racketAngle) ? racketAngle : null,
-                    racketSpeed: racketSpeed !== null && !isNaN(racketSpeed) ? racketSpeed : null
+                    racketSpeed: racketSpeed !== null && !isNaN(racketSpeed) ? racketSpeed : null,
+                    decayMs: value.byteLength >= 20 ? duration : null,
+                    torsionKick,
+                    vibrationLevel
                 });
             }
         } else {

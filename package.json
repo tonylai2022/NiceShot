@@ -1,0 +1,27 @@
+{
+  "name": "tennissensor",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "app.js",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tonylai2022/NiceShot.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/tonylai2022/NiceShot/issues"
+  },
+  "homepage": "https://github.com/tonylai2022/NiceShot#readme",
+  "description": "",
+  "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0"
+  }
+}

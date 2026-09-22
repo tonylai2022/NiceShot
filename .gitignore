@@ -32,6 +32,9 @@ include/
 
 # Environment variables / IDE settings
 .env
+.env.*
+!.env.example
+node_modules/
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
@@ -48,3 +51,4 @@ include/
 ehthumbs.db
 Thumbs.db
 Desktop.ini
+.vercel
