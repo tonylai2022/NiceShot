@@ -15,6 +15,9 @@ const peakGText = document.getElementById('peakGText');
 const maxGyroText = document.getElementById('maxGyroText');
 const racketSpeedText = document.getElementById('racketSpeedText');
 const racketAngleText = document.getElementById('racketAngleText');
+const racketFaceLabel = document.getElementById('racketFaceLabel');
+const racketFaceState = document.getElementById('racketFaceState');
+const racketAngleMarker = document.getElementById('racketAngleMarker');
 const totalHitsText = document.getElementById('totalHitsText');
 const logContainer = document.getElementById('logContainer');
 const clearLogBtn = document.getElementById('clearLogBtn');
@@ -70,6 +73,45 @@ function getStrokeStyle(strokeType) {
     }
 }
 
+function normalizeAngle(angle) {
+    return ((angle + 180) % 360 + 360) % 360 - 180;
+}
+
+function getFaceAngle(sensorAngle, strokeSide) {
+    if (sensorAngle === null || strokeSide === null) return null;
+    const forehandFaceAngle = 90 - Math.abs(normalizeAngle(sensorAngle));
+    return strokeSide === "Backhand" ? -forehandFaceAngle : forehandFaceAngle;
+}
+
+function getFaceState(faceAngle) {
+    if (faceAngle === null) return "Waiting";
+    if (faceAngle > 5) return "Open";
+    if (faceAngle < -5) return "Closed";
+    return "Neutral";
+}
+
+function renderFaceAngle(faceAngle, strokeSide = null, waiting = false) {
+    const faceState = waiting ? "Waiting" : strokeSide === null ? "Camera needed" : getFaceState(faceAngle);
+    const stateClasses = {
+        Open: "text-cyan-300",
+        Neutral: "text-emerald-300",
+        Closed: "text-amber-300",
+        "Camera needed": "text-slate-400",
+        Waiting: "text-slate-400"
+    };
+
+    racketFaceLabel.textContent = strokeSide === null ? "Racket Face" : `${strokeSide} Face`;
+    racketAngleText.textContent = faceAngle === null
+        ? "--"
+        : `${faceAngle >= 0 ? "+" : ""}${faceAngle.toFixed(1)}°`;
+    racketFaceState.textContent = faceState;
+    racketFaceState.className = `text-xs font-bold uppercase ${stateClasses[faceState]}`;
+
+    const markerPosition = faceAngle === null ? 50 : Math.max(0, Math.min(100, 50 + faceAngle / 0.9));
+    racketAngleMarker.style.left = `${markerPosition}%`;
+    racketAngleMarker.classList.toggle("opacity-0", faceAngle === null);
+}
+
 // 進階揮拍分類與多指標處理（含資料防呆）
 function processImpact(impactData) {
     const peakG = (impactData && typeof impactData.peakG === 'number') ? impactData.peakG : 0;
@@ -78,9 +120,12 @@ function processImpact(impactData) {
     const racketSpeed = measuredRacketSpeed !== null && measuredRacketSpeed > 0
         ? measuredRacketSpeed
         : maxGyro * Math.PI / 180 * RACKET_HEAD_RADIUS_METERS * 3.6;
-    const racketAngle = (impactData && Number.isFinite(impactData.racketAngle)) ? impactData.racketAngle : null;
+    const sensorAngle = (impactData && Number.isFinite(impactData.racketAngle))
+        ? normalizeAngle(impactData.racketAngle)
+        : null;
 
     let strokeType = "Standard Stroke";
+    let strokeSide = null;
     const isLefty = handednessSelect.value === 'left';
 
     if (latestLandmarks) {
@@ -95,6 +140,7 @@ function processImpact(impactData) {
 
         if (!isLefty) {
             const isBackhandZone = activeWrist.x < torsoCenterX || (activeWrist.x < rightShoulder.x && wristVelocityX < 0);
+            strokeSide = isBackhandZone ? "Backhand" : "Forehand";
 
             if (isBackhandZone) {
                 strokeType = peakG > 5.5 ? "Backhand Drive" : "Backhand Slice";
@@ -103,6 +149,7 @@ function processImpact(impactData) {
             }
         } else {
             const isBackhandZone = activeWrist.x > torsoCenterX || (activeWrist.x > leftShoulder.x && wristVelocityX > 0);
+            strokeSide = isBackhandZone ? "Backhand" : "Forehand";
 
             if (isBackhandZone) {
                 strokeType = peakG > 5.5 ? "Backhand Drive" : "Backhand Slice";
@@ -114,15 +161,18 @@ function processImpact(impactData) {
         strokeType = peakG > 6.0 ? "Heavy Impact" : "Standard Stroke";
     }
 
+    const faceAngle = getFaceAngle(sensorAngle, strokeSide);
+    const faceState = strokeSide === null ? "Camera needed" : getFaceState(faceAngle);
+
     const timestampMs = Date.now();
-    const record = { timeMs: timestampMs, peakG, maxGyro, racketSpeed, racketAngle, type: strokeType };
+    const record = { timeMs: timestampMs, peakG, maxGyro, racketSpeed, faceAngle, faceState, type: strokeType };
     hitHistory.push(record);
 
     // 更新 HUD 顯示（安全防呆 toFixed）
     peakGText.textContent = `${peakG.toFixed(2)} G`;
     if (maxGyroText) maxGyroText.textContent = `${maxGyro.toFixed(1)} °/s`;
     if (racketSpeedText) racketSpeedText.textContent = racketSpeed === null ? "N/A" : `${racketSpeed.toFixed(1)} km/h`;
-    if (racketAngleText) racketAngleText.textContent = racketAngle === null ? "N/A" : `${racketAngle.toFixed(1)}°`;
+    renderFaceAngle(faceAngle, strokeSide);
     totalHitsText.textContent = hitHistory.length;
 
     const style = getStrokeStyle(strokeType);
@@ -142,7 +192,7 @@ function appendLog(record, style) {
             <span>${record.peakG.toFixed(2)}G</span>
             <span>${record.maxGyro.toFixed(0)}°/s</span>
             <span>${record.racketSpeed === null ? "N/A" : `${record.racketSpeed.toFixed(1)}km/h`}</span>
-            <span>${record.racketAngle === null ? "N/A" : `${record.racketAngle.toFixed(1)}°`}</span>
+            <span>${record.faceAngle === null ? record.faceState : `${record.faceState} ${record.faceAngle >= 0 ? "+" : ""}${record.faceAngle.toFixed(1)}°`}</span>
         </div>
     `;
     logContainer.prepend(logItem);
@@ -155,7 +205,7 @@ clearLogBtn.addEventListener('click', () => {
     peakGText.textContent = "0.00 G";
     if (maxGyroText) maxGyroText.textContent = "0.00 °/s";
     if (racketSpeedText) racketSpeedText.textContent = "0.0 km/h";
-    if (racketAngleText) racketAngleText.textContent = "0.0°";
+    renderFaceAngle(null, null, true);
     strokeText.textContent = "Tracking Active";
     strokeText.className = "text-lg font-bold text-emerald-400 mt-1";
 });
@@ -178,6 +228,8 @@ function onResults(results) {
 
         drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#10b981', lineWidth: 2 });
         drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#ef4444', lineWidth: 1, radius: 3 });
+    } else {
+        latestLandmarks = null;
     }
     canvasCtx.restore();
 }

@@ -79,9 +79,23 @@
                         <span class="text-slate-400 text-xs block">Racket Speed</span>
                         <span id="racketSpeedText" class="font-mono text-base font-bold text-cyan-300">0.0 km/h</span>
                     </div>
-                    <div>
-                        <span class="text-slate-400 text-xs block">Racket Angle</span>
-                        <span id="racketAngleText" class="font-mono text-base font-bold text-amber-300">0.0°</span>
+                    <div class="col-span-2 pt-1">
+                        <div class="flex items-end justify-between">
+                            <div>
+                                <span id="racketFaceLabel" class="text-slate-400 text-xs block">Racket Face</span>
+                                <span id="racketAngleText" class="font-mono text-base font-bold text-white">--</span>
+                            </div>
+                            <span id="racketFaceState" class="text-xs font-bold uppercase text-slate-400">Waiting</span>
+                        </div>
+                        <div class="face-angle-scale mt-2">
+                            <span class="face-angle-center"></span>
+                            <span id="racketAngleMarker" class="face-angle-marker opacity-0"></span>
+                        </div>
+                        <div class="mt-1 flex justify-between text-[10px] text-slate-500">
+                            <span>Closed -</span>
+                            <span>Neutral 0°</span>
+                            <span>+ Open</span>
+                        </div>
                     </div>
                     <div>
                         <span class="text-slate-400 text-xs block">Total Hits</span>
@@ -104,7 +118,7 @@
     </div>
 
     <!-- Main Entry Point Module -->
-    <script type="module" src="app.js?v=2"></script>
+    <script type="module" src="app.js?v=7"></script>
 </body>
 
 </html>

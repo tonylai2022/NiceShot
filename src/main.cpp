@@ -118,7 +118,7 @@ void loop() {
   if (totalG > IMPACT_THRESHOLD) {
     float peakG = totalG;
     float maxGyro = getRecentMaxGyro(millis());
-    float racketAngle = currentRacketAngle;
+    float sensorAngle = currentRacketAngle;
     unsigned long startTime = millis();
     unsigned long windowStart = millis(); 
     
@@ -135,7 +135,7 @@ void loop() {
       float curG = sqrt(sa * sa + sb * sb + sc * sc);
       if (curG > peakG) {
         peakG = curG;
-        racketAngle = sampleRacketAngle;
+        sensorAngle = sampleRacketAngle;
       }
       float sampleGyroMagnitude = sqrt(sx * sx + sy * sy + sg * sg);
       if (sampleGyroMagnitude > maxGyro) maxGyro = sampleGyroMagnitude;
@@ -150,8 +150,8 @@ void loop() {
     Serial.print(maxGyro);
     Serial.print(" °/s | Duration: ");
     Serial.print(duration);
-    Serial.print(" ms | Racket Angle: ");
-    Serial.print(racketAngle);
+    Serial.print(" ms | Sensor Angle: ");
+    Serial.print(sensorAngle);
     Serial.print("° | Racket Speed: ");
     Serial.print(racketSpeedKmh);
     Serial.println(" km/h");
@@ -165,7 +165,7 @@ void loop() {
       memcpy(&payload[0], &peakG, 4);       // 0-3 bytes: peakG
       memcpy(&payload[4], &maxGyro, 4);     // 4-7 bytes: maxGyro
       memcpy(&payload[8], &durationMs, 2);  // 8-9 bytes: duration
-      memcpy(&payload[10], &racketAngle, 4); // 10-13 bytes: racketAngle
+      memcpy(&payload[10], &sensorAngle, 4); // 10-13 bytes: raw sensor angle
       memcpy(&payload[14], &racketSpeedKmh, 4); // 14-17 bytes: estimated racket speed
       
       uint16_t result = impactCharacteristic.notify(payload, sizeof(payload));
