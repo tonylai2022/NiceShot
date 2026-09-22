@@ -1,6 +1,7 @@
-import { TennisBLEService } from './ble-service.js';
+import { TennisBLEService } from './ble-service.js?v=2';
 
 const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
+const RACKET_HEAD_RADIUS_METERS = 0.68;
 
 let hitHistory = [];
 let latestLandmarks = null;
@@ -12,7 +13,7 @@ const bleStatus = document.getElementById('bleStatus');
 const strokeText = document.getElementById('strokeText');
 const peakGText = document.getElementById('peakGText');
 const maxGyroText = document.getElementById('maxGyroText');
-const durationText = document.getElementById('durationText');
+const racketSpeedText = document.getElementById('racketSpeedText');
 const racketAngleText = document.getElementById('racketAngleText');
 const totalHitsText = document.getElementById('totalHitsText');
 const logContainer = document.getElementById('logContainer');
@@ -73,7 +74,10 @@ function getStrokeStyle(strokeType) {
 function processImpact(impactData) {
     const peakG = (impactData && typeof impactData.peakG === 'number') ? impactData.peakG : 0;
     const maxGyro = (impactData && typeof impactData.maxGyro === 'number') ? impactData.maxGyro : 0;
-    const duration = (impactData && typeof impactData.duration === 'number') ? impactData.duration : 0;
+    const measuredRacketSpeed = (impactData && Number.isFinite(impactData.racketSpeed)) ? impactData.racketSpeed : null;
+    const racketSpeed = measuredRacketSpeed !== null && measuredRacketSpeed > 0
+        ? measuredRacketSpeed
+        : maxGyro * Math.PI / 180 * RACKET_HEAD_RADIUS_METERS * 3.6;
     const racketAngle = (impactData && Number.isFinite(impactData.racketAngle)) ? impactData.racketAngle : null;
 
     let strokeType = "Standard Stroke";
@@ -111,13 +115,13 @@ function processImpact(impactData) {
     }
 
     const timestampMs = Date.now();
-    const record = { timeMs: timestampMs, peakG, maxGyro, duration, racketAngle, type: strokeType };
+    const record = { timeMs: timestampMs, peakG, maxGyro, racketSpeed, racketAngle, type: strokeType };
     hitHistory.push(record);
 
     // 更新 HUD 顯示（安全防呆 toFixed）
     peakGText.textContent = `${peakG.toFixed(2)} G`;
     if (maxGyroText) maxGyroText.textContent = `${maxGyro.toFixed(1)} °/s`;
-    if (durationText) durationText.textContent = `${duration} ms`;
+    if (racketSpeedText) racketSpeedText.textContent = racketSpeed === null ? "N/A" : `${racketSpeed.toFixed(1)} km/h`;
     if (racketAngleText) racketAngleText.textContent = racketAngle === null ? "N/A" : `${racketAngle.toFixed(1)}°`;
     totalHitsText.textContent = hitHistory.length;
 
@@ -137,8 +141,8 @@ function appendLog(record, style) {
         <div class="flex gap-3 font-mono text-slate-300">
             <span>${record.peakG.toFixed(2)}G</span>
             <span>${record.maxGyro.toFixed(0)}°/s</span>
+            <span>${record.racketSpeed === null ? "N/A" : `${record.racketSpeed.toFixed(1)}km/h`}</span>
             <span>${record.racketAngle === null ? "N/A" : `${record.racketAngle.toFixed(1)}°`}</span>
-            <span class="text-slate-400">${record.duration}ms</span>
         </div>
     `;
     logContainer.prepend(logItem);
@@ -150,7 +154,7 @@ clearLogBtn.addEventListener('click', () => {
     totalHitsText.textContent = "0";
     peakGText.textContent = "0.00 G";
     if (maxGyroText) maxGyroText.textContent = "0.00 °/s";
-    if (durationText) durationText.textContent = "0 ms";
+    if (racketSpeedText) racketSpeedText.textContent = "0.0 km/h";
     if (racketAngleText) racketAngleText.textContent = "0.0°";
     strokeText.textContent = "Tracking Active";
     strokeText.className = "text-lg font-bold text-emerald-400 mt-1";
