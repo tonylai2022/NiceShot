@@ -4,7 +4,7 @@ Browser HUD for a XIAO nRF52840/LSM6DS3 tennis sensor, MediaPipe pose tracking, 
 
 ## JEV setup
 
-The browser calls `/api/jev`; the API key stays in the Vercel serverless function. Node.js 20 or newer is required by `@typesafe-ai/sdk`.
+The browser calls `/api/jev`; the API key stays in the Vercel serverless function. Use Node.js 22 LTS for local Vercel development.
 
 ```powershell
 npm install

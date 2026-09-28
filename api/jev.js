@@ -1,15 +1,19 @@
 import { choice, noul, score, TypeSafeClient } from "@typesafe-ai/sdk";
 
-const MAX_PARALLEL_REQUESTS = 8;
+const MAX_PARALLEL_REQUESTS = 1;
 let activeRequests = 0;
 const pendingRequests = [];
 
 const QUESTIONS = Object.freeze({
-    stroke_type: choice("Classify the tennis stroke. Treat state.strokeSide from MediaPipe as authoritative for forehand versus backhand. Sensor angles are folded so flipping the racket sensor side does not change stroke identity.", {
-        forehand_topspin: "Forehand with topspin or drive motion; choose only when strokeSide is Forehand.",
+    stroke_type: choice("Classify the tennis stroke. Treat state.strokeSide and the temporal MediaPipe trajectory as authoritative. Positive faceAngle is open and negative faceAngle is closed.", {
+        forehand_flat: "Forehand groundstroke with a mostly horizontal swing path; choose only when strokeSide is Forehand.",
+        forehand_topspin: "Forehand groundstroke with a low-to-high swing path; choose only when strokeSide is Forehand.",
         forehand_slice: "Forehand slice; choose only when strokeSide is Forehand.",
-        backhand_drive: "Backhand drive or topspin; choose only when strokeSide is Backhand.",
+        forehand_volley: "Compact forehand volley with a short backswing and follow-through; choose only when strokeSide is Forehand.",
+        backhand_flat: "Backhand groundstroke with a mostly horizontal swing path; choose only when strokeSide is Backhand.",
+        backhand_topspin: "Backhand groundstroke with a low-to-high swing path; choose only when strokeSide is Backhand.",
         backhand_slice: "Backhand slice; choose only when strokeSide is Backhand.",
+        backhand_volley: "Compact backhand volley with a short backswing and follow-through; choose only when strokeSide is Backhand.",
         serve: "Overhead service motion.",
         smash: "Overhead attacking smash that is not a serve."
     }),
@@ -74,7 +78,7 @@ export function normalizeJevState(state) {
     return {
         ...state,
         sensorAngle: Number.isFinite(state.sensorAngle) ? Math.abs(state.sensorAngle) : null,
-        faceAngle: Number.isFinite(state.faceAngle) ? Math.abs(state.faceAngle) : null
+        faceAngle: Number.isFinite(state.faceAngle) ? state.faceAngle : null
     };
 }
 

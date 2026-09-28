@@ -8,9 +8,9 @@ function fakeResult(index) {
     return {
         answers: {
             stroke_type: {
-                choice: index % 2 === 0 ? "forehand_topspin" : "backhand_drive",
+                choice: index % 2 === 0 ? "forehand_topspin" : "backhand_topspin",
                 confidence: 0.91,
-                probabilities: { forehand_topspin: 0.91, backhand_drive: 0.09 }
+                probabilities: { forehand_topspin: 0.91, backhand_topspin: 0.09 }
             },
             is_junk: {
                 value: 0.02,
@@ -39,7 +39,7 @@ function fakeResult(index) {
     };
 }
 
-test("classifies 10 simulated swings with at most 8 parallel requests", async () => {
+test("classifies 10 simulated swings with one request at a time", async () => {
     const originalFetch = globalThis.fetch;
     let activeRequests = 0;
     let maximumParallelRequests = 0;
@@ -68,9 +68,14 @@ test("classifies 10 simulated swings with at most 8 parallel requests", async ()
             maxGyro: 200 + index * 20,
             racketSpeed: 10 + index,
             sensorAngle: index % 2 === 0 ? 80 : 100,
-            wristX: 0.4,
-            torsoCenterX: 0.5,
-            wristVelocityX: 0.03,
+            strokeSide: "Forehand",
+            trajectoryStrokeType: "Forehand Topspin",
+            trajectoryConfidence: 0.85,
+            trajectoryFeatures: {
+                totalPath: 1.6,
+                verticalThroughContact: 0.5,
+                horizontalThroughContact: 0.8
+            },
             isLefty: false,
             faceAngle: index % 2 === 0 ? 10 : -10,
             hitHistoryTail: []
@@ -80,7 +85,7 @@ test("classifies 10 simulated swings with at most 8 parallel requests", async ()
 
         assert.equal(results.length, 10);
         assert.equal(requestCount, 10);
-        assert.equal(maximumParallelRequests, 8);
+        assert.equal(maximumParallelRequests, 1);
         for (const result of results) {
             assert.equal(result.model, "jev-latest");
             assert.equal(result.answers.should_count.value, 0.97);
@@ -93,21 +98,27 @@ test("classifies 10 simulated swings with at most 8 parallel requests", async ()
     }
 });
 
-test("folds flipped sensor orientations into identical JEV state", () => {
+test("folds raw sensor orientation while preserving racket-face direction", () => {
     const commonState = {
         peakG: 10,
         maxGyro: 300,
         racketSpeed: 14,
         strokeSide: "Forehand",
-        wristX: 0.6,
-        torsoCenterX: 0.5,
-        wristVelocityX: 0.04,
+        trajectoryStrokeType: "Forehand Flat Groundstroke",
+        trajectoryConfidence: 0.8,
+        trajectoryFeatures: {
+            totalPath: 1.4,
+            verticalThroughContact: 0.05,
+            horizontalThroughContact: 0.9
+        },
         isLefty: false,
         hitHistoryTail: []
     };
 
-    const sensorFaceUp = normalizeJevState({ ...commonState, sensorAngle: 80, faceAngle: 10 });
-    const sensorFaceDown = normalizeJevState({ ...commonState, sensorAngle: -80, faceAngle: -10 });
+    const openFace = normalizeJevState({ ...commonState, sensorAngle: 80, faceAngle: 10 });
+    const closedFace = normalizeJevState({ ...commonState, sensorAngle: -80, faceAngle: -10 });
 
-    assert.deepEqual(sensorFaceUp, sensorFaceDown);
+    assert.equal(openFace.sensorAngle, closedFace.sensorAngle);
+    assert.equal(openFace.faceAngle, 10);
+    assert.equal(closedFace.faceAngle, -10);
 });

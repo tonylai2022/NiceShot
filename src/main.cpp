@@ -9,10 +9,12 @@ BLEService        tennisService("19B10000-E8F2-537E-4F6C-D104768A1214");
 BLECharacteristic impactCharacteristic("19B10011-E8F2-537E-4F6C-D104768A1214");
 
 const float IMPACT_THRESHOLD = 3.5; 
+const float MIN_SWING_GYRO_DIFFERENCE = 120.0f;
 const float RACKET_HEAD_RADIUS_METERS = 0.68f;
 const uint32_t PRE_IMPACT_WINDOW_MS = 300;
 const uint32_t IMPACT_PEAK_WINDOW_MS = 30;
 const uint32_t POST_IMPACT_WINDOW_MS = 120;
+const uint32_t IMPACT_COOLDOWN_MS = 80;
 const uint16_t GYRO_HISTORY_SIZE = 128;
 
 struct GyroSample {
@@ -25,6 +27,7 @@ uint16_t gyroHistoryWriteIndex = 0;
 uint16_t gyroHistoryCount = 0;
 float trackedRacketAngle = 0.0f;
 uint32_t lastOrientationMicros = 0;
+uint32_t lastImpactCandidateMs = 0;
 bool orientationInitialized = false;
 
 void recordGyroSample(float magnitude, uint32_t timestampMs) {
@@ -43,6 +46,23 @@ float getRecentMaxGyro(uint32_t nowMs) {
   }
 
   return maximum;
+}
+
+float getRecentGyroDifference(uint32_t nowMs) {
+  if (gyroHistoryCount == 0) return 0.0f;
+
+  float minimum = gyroHistory[(gyroHistoryWriteIndex + GYRO_HISTORY_SIZE - 1) % GYRO_HISTORY_SIZE].magnitude;
+  float maximum = minimum;
+
+  for (uint16_t offset = 0; offset < gyroHistoryCount; offset++) {
+    uint16_t index = (gyroHistoryWriteIndex + GYRO_HISTORY_SIZE - 1 - offset) % GYRO_HISTORY_SIZE;
+    if (nowMs - gyroHistory[index].timestampMs > PRE_IMPACT_WINDOW_MS) break;
+    float magnitude = gyroHistory[index].magnitude;
+    if (magnitude < minimum) minimum = magnitude;
+    if (magnitude > maximum) maximum = magnitude;
+  }
+
+  return maximum - minimum;
 }
 
 float updateRacketAngle(float ax, float ay, float az, float gyroX) {
@@ -116,10 +136,20 @@ void loop() {
 
   float totalG = sqrt(ax * ax + ay * ay + az * az);
   float gyroMagnitude = sqrt(gx * gx + gy * gy + gz * gz);
-  recordGyroSample(gyroMagnitude, millis());
+  uint32_t nowMs = millis();
+  float preImpactGyroDifference = getRecentGyroDifference(nowMs);
+  recordGyroSample(gyroMagnitude, nowMs);
   float currentRacketAngle = updateRacketAngle(ax, ay, az, gx);
 
-  if (totalG > IMPACT_THRESHOLD) {
+  if (totalG > IMPACT_THRESHOLD && nowMs - lastImpactCandidateMs >= IMPACT_COOLDOWN_MS) {
+    lastImpactCandidateMs = nowMs;
+    if (preImpactGyroDifference < MIN_SWING_GYRO_DIFFERENCE) {
+      Serial.print("[BOUNCE IGNORED] Gyro Difference: ");
+      Serial.print(preImpactGyroDifference);
+      Serial.println(" deg/s");
+      return;
+    }
+
     float peakG = totalG;
     float maxGyro = getRecentMaxGyro(millis());
     float sensorAngle = currentRacketAngle;
@@ -142,12 +172,11 @@ void loop() {
       float sx = myIMU.readFloatGyroX();
       float sy = myIMU.readFloatGyroY();
       float sg = myIMU.readFloatGyroZ();
-      float sampleRacketAngle = updateRacketAngle(sa, sb, sc, sx);
+      updateRacketAngle(sa, sb, sc, sx);
       
       float curG = sqrt(sa * sa + sb * sb + sc * sc);
       if (elapsedMs < IMPACT_PEAK_WINDOW_MS && curG > peakG) {
         peakG = curG;
-        sensorAngle = sampleRacketAngle;
       }
       float sampleGyroMagnitude = sqrt(sx * sx + sy * sy + sg * sg);
       if (sampleGyroMagnitude > maxGyro) maxGyro = sampleGyroMagnitude;
@@ -215,7 +244,6 @@ void loop() {
       Serial.println(result);
     }
     
-    delay(400); 
   }
 
   delay(2);

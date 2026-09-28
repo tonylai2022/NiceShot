@@ -1,4 +1,4 @@
-const MAX_PARALLEL_REQUESTS = 8;
+const MAX_PARALLEL_REQUESTS = 1;
 const RETRYABLE_STATUSES = new Set([429, 529]);
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 500;
@@ -30,6 +30,10 @@ function wait(milliseconds) {
 
 function isOffline() {
     return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+export function isSwingClassificationBusy() {
+    return activeRequests > 0 || pendingRequests.length > 0;
 }
 
 export async function classifySwing(state) {

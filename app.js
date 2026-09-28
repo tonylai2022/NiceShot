@@ -1,16 +1,17 @@
 import { TennisBLEService } from './ble-service.js?v=2';
-import { classifySwing } from './jev-service.js?v=1';
+import { classifySwing, isSwingClassificationBusy } from './jev-service.js?v=2';
 import { ContactQualityTracker } from './contact-quality.js?v=1';
+import { getRacketFaceAngle, getRacketFaceState, normalizeAngle } from './racket-angle.js?v=3';
+import { PoseTrajectoryBuffer } from './stroke-classifier.js?v=1';
 
 const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
 const RACKET_HEAD_RADIUS_METERS = 0.68;
+const IMPACT_CAPTURE_LATENCY_MS = 120;
 
 let hitHistory = [];
-let latestLandmarks = null;
-let previousWristX = 0;
-let latestWristVelocityX = 0;
 let latestImpactId = 0;
 const contactQualityTracker = new ContactQualityTracker();
+const poseTrajectoryBuffer = new PoseTrajectoryBuffer();
 
 // DOM Elements
 const connectBtn = document.getElementById('connectBtn');
@@ -32,11 +33,19 @@ const contactQualityDetail = document.getElementById('contactQualityDetail');
 const totalHitsText = document.getElementById('totalHitsText');
 const logContainer = document.getElementById('logContainer');
 const clearLogBtn = document.getElementById('clearLogBtn');
+const logsBtn = document.getElementById('logsBtn');
+const closeLogsBtn = document.getElementById('closeLogsBtn');
 const handednessSelect = document.getElementById('handednessSelect');
+const cameraAngleSelect = document.getElementById('cameraAngleSelect');
+const cameraFacingSelect = document.getElementById('cameraFacingSelect');
 
 const videoElement = document.getElementById('webcam');
 const canvasElement = document.getElementById('outputCanvas');
 const canvasCtx = canvasElement.getContext('2d');
+let cameraStream = null;
+let cameraFrameRequest = null;
+let isSendingPose = false;
+let cameraStartVersion = 0;
 
 const bleService = new TennisBLEService(
     SERVICE_UUID,
@@ -84,25 +93,8 @@ function getStrokeStyle(strokeType) {
     }
 }
 
-function normalizeAngle(angle) {
-    return ((angle + 180) % 360 + 360) % 360 - 180;
-}
-
-function getFaceAngle(sensorAngle, strokeSide) {
-    if (sensorAngle === null || strokeSide === null) return null;
-    const forehandFaceAngle = 90 - Math.abs(normalizeAngle(sensorAngle));
-    return strokeSide === "Backhand" ? -forehandFaceAngle : forehandFaceAngle;
-}
-
-function getFaceState(faceAngle) {
-    if (faceAngle === null) return "Waiting";
-    if (faceAngle > 5) return "Open";
-    if (faceAngle < -5) return "Closed";
-    return "Neutral";
-}
-
 function renderFaceAngle(faceAngle, strokeSide = null, waiting = false, confidence = null) {
-    const faceState = waiting ? "Waiting" : strokeSide === null ? "Camera needed" : getFaceState(faceAngle);
+    const faceState = waiting ? "Waiting" : strokeSide === null ? "Camera needed" : getRacketFaceState(faceAngle);
     const stateClasses = {
         Open: "text-cyan-300",
         Neutral: "text-emerald-300",
@@ -156,7 +148,7 @@ function renderContactQuality(contactQuality, rawFeatures = null) {
         : `Twist ${rawFeatures.torsionKick.toFixed(0)}°/s · Vibration ${rawFeatures.vibrationLevel.toFixed(2)}G · Decay ${rawFeatures.decayMs}ms`;
 }
 
-function processImpactFallback(impactData) {
+function processImpactFallback(impactData, impactTimestamp) {
     const peakG = (impactData && typeof impactData.peakG === 'number') ? impactData.peakG : 0;
     const maxGyro = (impactData && typeof impactData.maxGyro === 'number') ? impactData.maxGyro : 0;
     const measuredRacketSpeed = (impactData && Number.isFinite(impactData.racketSpeed)) ? impactData.racketSpeed : null;
@@ -170,48 +162,14 @@ function processImpactFallback(impactData) {
     const vibrationLevel = Number.isFinite(impactData?.vibrationLevel) ? impactData.vibrationLevel : null;
     const decayMs = Number.isFinite(impactData?.decayMs) ? impactData.decayMs : null;
 
-    let strokeType = "Standard Stroke";
-    let strokeSide = null;
-    let wristX = null;
-    let torsoCenterX = null;
     const isLefty = handednessSelect.value === 'left';
-
-    if (latestLandmarks) {
-        const activeWristIndex = isLefty ? 15 : 16;
-        const activeWrist = latestLandmarks[activeWristIndex];
-
-        const leftShoulder = latestLandmarks[11];
-        const rightShoulder = latestLandmarks[12];
-        torsoCenterX = (leftShoulder.x + rightShoulder.x) / 2;
-        wristX = activeWrist.x;
-
-        const wristVelocityX = latestWristVelocityX;
-
-        if (!isLefty) {
-            const isBackhandZone = activeWrist.x < torsoCenterX || (activeWrist.x < rightShoulder.x && wristVelocityX < 0);
-            strokeSide = isBackhandZone ? "Backhand" : "Forehand";
-
-            if (isBackhandZone) {
-                strokeType = peakG > 5.5 ? "Backhand Drive" : "Backhand Slice";
-            } else {
-                strokeType = peakG > 6.5 ? "Forehand Smash / Heavy Drive" : "Forehand Drive";
-            }
-        } else {
-            const isBackhandZone = activeWrist.x > torsoCenterX || (activeWrist.x > leftShoulder.x && wristVelocityX > 0);
-            strokeSide = isBackhandZone ? "Backhand" : "Forehand";
-
-            if (isBackhandZone) {
-                strokeType = peakG > 5.5 ? "Backhand Drive" : "Backhand Slice";
-            } else {
-                strokeType = peakG > 6.5 ? "Forehand Smash / Heavy Drive" : "Forehand Drive";
-            }
-        }
-    } else {
-        strokeType = peakG > 6.0 ? "Heavy Impact" : "Standard Stroke";
-    }
-
-    const faceAngle = getFaceAngle(sensorAngle, strokeSide);
-    const faceState = strokeSide === null ? "Camera needed" : getFaceState(faceAngle);
+    const trajectory = poseTrajectoryBuffer.classify(impactTimestamp);
+    const strokeType = trajectory.available
+        ? trajectory.strokeType
+        : peakG > 6.0 ? "Heavy Impact" : "Standard Stroke";
+    const strokeSide = trajectory.strokeSide;
+    const faceAngle = getRacketFaceAngle(sensorAngle);
+    const faceState = strokeSide === null ? "Camera needed" : getRacketFaceState(faceAngle);
 
     return {
         peakG,
@@ -221,10 +179,8 @@ function processImpactFallback(impactData) {
         vibrationLevel,
         decayMs,
         sensorAngle,
-        wristX,
-        torsoCenterX,
-        wristVelocityX: latestWristVelocityX,
         isLefty,
+        trajectory,
         faceAngle,
         faceState,
         strokeSide,
@@ -233,10 +189,14 @@ function processImpactFallback(impactData) {
 }
 
 const strokeLabels = {
+    forehand_flat: "Forehand Flat Groundstroke",
     forehand_topspin: "Forehand Topspin",
     forehand_slice: "Forehand Slice",
-    backhand_drive: "Backhand Drive",
+    forehand_volley: "Forehand Volley",
+    backhand_flat: "Backhand Flat Groundstroke",
+    backhand_topspin: "Backhand Topspin",
     backhand_slice: "Backhand Slice",
+    backhand_volley: "Backhand Volley",
     serve: "Serve",
     smash: "Smash"
 };
@@ -273,7 +233,8 @@ function updateImpactClassification(record) {
 }
 
 function processImpact(impactData) {
-    const fallback = processImpactFallback(impactData);
+    const impactTimestamp = performance.now() - IMPACT_CAPTURE_LATENCY_MS;
+    const fallback = processImpactFallback(impactData, impactTimestamp);
     const impactId = ++latestImpactId;
     const contactQuality = contactQualityTracker.evaluate(fallback);
 
@@ -305,17 +266,21 @@ function processImpact(impactData) {
         return;
     }
 
+    if (isSwingClassificationBusy()) {
+        return;
+    }
+
     const state = {
         peakG: fallback.peakG,
         maxGyro: fallback.maxGyro,
         racketSpeed: fallback.racketSpeed,
         sensorAngle: fallback.sensorAngle === null ? null : Math.abs(fallback.sensorAngle),
         strokeSide: fallback.strokeSide,
-        wristX: fallback.wristX,
-        torsoCenterX: fallback.torsoCenterX,
-        wristVelocityX: fallback.wristVelocityX,
+        trajectoryStrokeType: fallback.trajectory.strokeType,
+        trajectoryConfidence: fallback.trajectory.confidence,
+        trajectoryFeatures: fallback.trajectory.features,
         isLefty: fallback.isLefty,
-        faceAngle: fallback.faceAngle === null ? null : Math.abs(fallback.faceAngle),
+        faceAngle: fallback.faceAngle,
         contactQuality: contactQuality.available ? {
             label: contactQuality.label,
             score: contactQuality.score,
@@ -392,6 +357,7 @@ function appendLog(record, style) {
 clearLogBtn.addEventListener('click', () => {
     hitHistory = [];
     contactQualityTracker.reset();
+    poseTrajectoryBuffer.clear();
     logContainer.innerHTML = `<div class="text-slate-500 italic">No impacts recorded yet. Swing racket...</div>`;
     totalHitsText.textContent = "0";
     peakGText.textContent = "0.00 G";
@@ -405,6 +371,14 @@ clearLogBtn.addEventListener('click', () => {
     strokeText.className = "text-lg font-bold text-emerald-400 mt-1";
 });
 
+logsBtn.addEventListener('click', () => {
+    document.body.classList.add('logs-open');
+});
+
+closeLogsBtn.addEventListener('click', () => {
+    document.body.classList.remove('logs-open');
+});
+
 // --- MediaPipe Pose Integration ---
 function onResults(results) {
     canvasElement.width = videoElement.videoWidth || 640;
@@ -415,18 +389,16 @@ function onResults(results) {
     canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
     if (results.poseLandmarks) {
-        latestLandmarks = results.poseLandmarks;
         const isLefty = handednessSelect.value === 'left';
-        const activeWristIndex = isLefty ? 15 : 16;
-        const currentWristX = latestLandmarks[activeWristIndex].x;
-
-        latestWristVelocityX = previousWristX === 0 ? 0 : currentWristX - previousWristX;
-        previousWristX = currentWristX;
+        poseTrajectoryBuffer.addLandmarks(
+            results.poseLandmarks,
+            isLefty,
+            cameraAngleSelect.value,
+            performance.now()
+        );
 
         drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, { color: '#10b981', lineWidth: 2 });
         drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#ef4444', lineWidth: 1, radius: 3 });
-    } else {
-        latestLandmarks = null;
     }
     canvasCtx.restore();
 }
@@ -443,12 +415,82 @@ pose.setOptions({
     minTrackingConfidence: 0.5
 });
 pose.onResults(onResults);
+handednessSelect.addEventListener('change', () => poseTrajectoryBuffer.clear());
+cameraAngleSelect.addEventListener('change', () => poseTrajectoryBuffer.clear());
 
-const camera = new Camera(videoElement, {
-    onFrame: async () => {
-        await pose.send({ image: videoElement });
-    },
-    width: 640,
-    height: 480
+function stopCamera() {
+    if (cameraFrameRequest !== null) {
+        cancelAnimationFrame(cameraFrameRequest);
+        cameraFrameRequest = null;
+    }
+    if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+        cameraStream = null;
+    }
+    videoElement.srcObject = null;
+}
+
+function sendPoseFrame() {
+    if (!cameraStream) return;
+
+    if (!isSendingPose && videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        isSendingPose = true;
+        pose.send({ image: videoElement }).catch((error) => {
+            console.warn("[Camera] Pose frame failed", error);
+        }).finally(() => {
+            isSendingPose = false;
+        });
+    }
+
+    cameraFrameRequest = requestAnimationFrame(sendPoseFrame);
+}
+
+async function startCamera(facingMode) {
+    const startVersion = ++cameraStartVersion;
+    stopCamera();
+
+    const videoConstraints = {
+        facingMode: { exact: facingMode },
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+    };
+
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+    } catch (error) {
+        if (facingMode !== "environment") throw error;
+        console.warn("[Camera] Back camera unavailable; using the default camera", error);
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        });
+    }
+
+    if (startVersion !== cameraStartVersion) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+        return;
+    }
+
+    const activeFacingMode = cameraStream.getVideoTracks()[0]?.getSettings().facingMode;
+    if (activeFacingMode === "user" || activeFacingMode === "environment") {
+        cameraFacingSelect.value = activeFacingMode;
+        cameraAngleSelect.value = activeFacingMode === "user" ? "front" : "rear";
+    }
+
+    poseTrajectoryBuffer.clear();
+    videoElement.srcObject = cameraStream;
+    await videoElement.play();
+    sendPoseFrame();
+}
+
+cameraFacingSelect.addEventListener('change', async () => {
+    try {
+        await startCamera(cameraFacingSelect.value);
+    } catch (error) {
+        console.error("[Camera] Could not switch camera", error);
+    }
 });
-camera.start();
+
+startCamera(cameraFacingSelect.value).catch((error) => {
+    console.error("[Camera] Could not start camera", error);
+});
